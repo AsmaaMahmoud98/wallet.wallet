@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>الحصالة — متابعة الإيداعات والمصروفات</title>
+<meta name="description" content="تطبيق بسيط لمتابعة أكثر من حصالة: إيداعات، مصروفات، وتقسيم حسب طريقة الدفع (كاش، إنستاباي، فودافون كاش)." />
+<meta name="theme-color" content="#064E3B" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="الحصالة" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=El+Messiri:wght@500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+
+<style>
+  :root { color-scheme: light; }
+  html, body { background: #F1F5F9; }
+  body { font-family: 'IBM Plex Sans Arabic', system-ui, sans-serif; margin: 0; }
+  .font-serif-ar { font-family: 'El Messiri', 'IBM Plex Sans Arabic', serif; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade-in { animation: fadeIn .15s ease-out; }
+  .animate-modal-in { animation: modalIn .2s ease-out; }
+  :focus-visible { outline: 2px solid #064E3B; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-in, .animate-modal-in { animation: none; }
+    * { transition-duration: .01ms !important; }
+  }
+  input, select, textarea, button { font-family: inherit; }
+  .boot { display: flex; min-height: 100vh; align-items: center; justify-content: center; color: #94A3B8; font-size: 14px; }
+  @media print {
+    .no-print { display: none !important; }
+    body * { visibility: hidden; }
+    #printable-report, #printable-report * { visibility: visible; }
+    #printable-report { position: absolute; inset: 0; width: 100%; padding: 12px 24px; }
+  }
+</style>
+</head>
+<body>
+<div id="root"><div class="boot">جارِ التحميل...</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+const STORAGE_KEY = 'piggybank-tracker-state';
+const INK = { dark: '#064E3B', deposit: '#059669', expense: '#BE123C' };
+
+const METHODS = {
+  cash: { label: 'كاش', hex: '#CA8A04', icon: 'banknote' },
+  instapay: { label: 'InstaPay', hex: '#0369A1', icon: 'send' },
+  vodafone: { label: 'فودافون كاش', hex: '#A21CAF', icon: 'wallet' },
+};
+
+const PALETTE = ['#0D9488', '#EA580C', '#7C3AED', '#0891B2', '#65A30D', '#DB2777'];
+
+const ICON_PATHS = {
+  plus: <><path d="M5 12h14" /><path d="M12 5v14" /></>,
+  minus: <path d="M5 12h14" />,
+  wallet: (
+    <>
+      <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" />
+      <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />
+    </>
+  ),
+  banknote: (
+    <>
+      <rect width="20" height="12" x="2" y="6" rx="2" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M6 12h.01M18 12h.01" />
+    </>
+  ),
+  send: <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>,
+  smartphone: <><rect width="14" height="20" x="5" y="2" rx="2" ry="2" /><path d="M12 18h.01" /></>,
+  trash: (
+    <>
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </>
+  ),
+  x: <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>,
+  check: <path d="M20 6 9 17l-5-5" />,
+  pencil: (
+    <>
+      <path d="M21.2 6.8a1.4 1.4 0 0 0-4-4L3.8 16.2a2 2 0 0 0-.5.8l-1.3 4.4a.5.5 0 0 0 .6.6l4.4-1.3a2 2 0 0 0 .8-.5z" />
+      <path d="m15 5 4 4" />
+    </>
+  ),
+  clock: <><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></>,
+  archive: (
+    <>
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </>
+  ),
+};
+
+function Icon({ name, size = 16, style, className }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={style}
+      className={className}
+      aria-hidden="true"
+    >
+      {ICON_PATHS[name]}
+    </svg>
+  );
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function pad(n) {
+  return String(n).padStart(2, '0');
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function nowTimeStr() {
+  const d = new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatAmount(n) {
+  return Number(n || 0).toLocaleString('en-US');
+}
+
+function formatDateTime(dateStr, timeStr) {
+  try {
+    const d = new Date(`${dateStr}T${timeStr || '00:00'}`);
+    if (isNaN(d.getTime())) return dateStr || '';
+    const datePart = d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
+    const timePart = d.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit' });
+    return `${datePart} — ${timePart}`;
+  } catch (e) {
+    return dateStr || '';
+  }
+}
+
+function formatShort(dateStr, timeStr) {
+  try {
+    const d = new Date(`${dateStr}T${timeStr || '00:00'}`);
+    if (isNaN(d.getTime())) return dateStr || '';
+    const datePart = d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' });
+    const timePart = d.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit' });
+    return `${datePart}، ${timePart}`;
+  } catch (e) {
+    return dateStr || '';
+  }
+}
+
+function bankTotals(bank) {
+  const totals = { cash: 0, instapay: 0, vodafone: 0 };
+  let balance = Number(bank.initialBalance || 0);
+  (bank.transactions || []).forEach((t) => {
+    const sign = t.type === 'deposit' ? 1 : -1;
+    totals[t.method] = (totals[t.method] || 0) + sign * Number(t.amount || 0);
+    balance += sign * Number(t.amount || 0);
+  });
+  return { totals, balance };
+}
+
+function formatDateOnly(dateStr) {
+  try {
+    const d = new Date(`${dateStr}T00:00`);
+    if (isNaN(d.getTime())) return dateStr || '';
+    return d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
+  } catch (e) {
+    return dateStr || '';
+  }
+}
+
+function startOfMonthStr(offsetMonths) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offsetMonths);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function endOfMonthStr(offsetMonths) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offsetMonths + 1);
+  d.setDate(0);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function computeReport(bank, fromDate, toDate) {
+  let opening = Number(bank.initialBalance || 0);
+  const rows = [];
+  const byMethod = {
+    cash: { deposit: 0, expense: 0 },
+    instapay: { deposit: 0, expense: 0 },
+    vodafone: { deposit: 0, expense: 0 },
+  };
+  let depositTotal = 0;
+  let expenseTotal = 0;
+
+  (bank.transactions || []).forEach((t) => {
+    const amt = Number(t.amount || 0);
+    if (fromDate && t.date < fromDate) {
+      opening += t.type === 'deposit' ? amt : -amt;
+    } else if (!toDate || t.date <= toDate) {
+      rows.push(t);
+      if (t.type === 'deposit') {
+        depositTotal += amt;
+        if (byMethod[t.method]) byMethod[t.method].deposit += amt;
+      } else {
+        expenseTotal += amt;
+        if (byMethod[t.method]) byMethod[t.method].expense += amt;
+      }
+    }
+  });
+
+  rows.sort((a, b) => `${a.date}T${a.time || '00:00'}`.localeCompare(`${b.date}T${b.time || '00:00'}`));
+
+  return {
+    bankName: bank.name,
+    fromDate,
+    toDate,
+    rows,
+    depositTotal,
+    expenseTotal,
+    net: depositTotal - expenseTotal,
+    opening,
+    closing: opening + depositTotal - expenseTotal,
+    byMethod,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveState(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function App() {
+  const [loading, setLoading] = useState(true);
+  const [banks, setBanks] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [filterType, setFilterType] = useState('all');
+  const [filterMethod, setFilterMethod] = useState('all');
+  const [modal, setModal] = useState(null);
+  const [editingTx, setEditingTx] = useState(null);
+  const [storageError, setStorageError] = useState(false);
+  const [depositors, setDepositors] = useState([]);
+  const [destinations, setDestinations] = useState([]);
+  const [reportData, setReportData] = useState(null);
+  const loadedRef = useRef(false);
+
+  useEffect(() => {
+    const data = loadState();
+    if (data) {
+      setBanks(data.banks || []);
+      setActiveId(data.activeId || (data.banks && data.banks[0] && data.banks[0].id) || null);
+      setDepositors(data.depositors || []);
+      setDestinations(data.destinations || []);
+    }
+    loadedRef.current = true;
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const ok = saveState({ banks, activeId, depositors, destinations });
+    setStorageError(!ok);
+  }, [banks, activeId, depositors, destinations]);
+
+  const activeBank = banks.find((b) => b.id === activeId) || null;
+
+  const filteredTx = activeBank
+    ? activeBank.transactions.filter(
+        (t) =>
+          (filterType === 'all' || t.type === filterType) &&
+          (filterMethod === 'all' || t.method === filterMethod)
+      )
+    : [];
+
+  function createBank(name, color, initialBalance) {
+    const nb = { id: uid(), name, color, initialBalance: Number(initialBalance) || 0, transactions: [] };
+    setBanks((prev) => [...prev, nb]);
+    setActiveId(nb.id);
+    setModal(null);
+  }
+
+  function updateInitialBalance(value) {
+    if (!activeBank) return;
+    setBanks((prev) =>
+      prev.map((b) => (b.id === activeBank.id ? { ...b, initialBalance: Number(value) || 0 } : b))
+    );
+    setModal(null);
+  }
+
+  function addTransaction(type, { amount, date, time, method, note }) {
+    if (!activeBank) return;
+    const tx = {
+      id: uid(),
+      type,
+      amount: Number(amount),
+      date,
+      time,
+      method,
+      note,
+      createdAt: new Date().toISOString(),
+      editedAt: null,
+    };
+    setBanks((prev) =>
+      prev.map((b) => (b.id === activeBank.id ? { ...b, transactions: [tx, ...b.transactions] } : b))
+    );
+    closeModal();
+  }
+
+  function editTransaction(txId, { amount, date, time, method, note }) {
+    if (!activeBank) return;
+    setBanks((prev) =>
+      prev.map((b) =>
+        b.id === activeBank.id
+          ? {
+              ...b,
+              transactions: b.transactions.map((t) =>
+                t.id === txId
+                  ? { ...t, amount: Number(amount), date, time, method, note, editedAt: new Date().toISOString() }
+                  : t
+              ),
+            }
+          : b
+      )
+    );
+    closeModal();
+  }
+
+  function deleteTransaction(txId) {
+    if (!activeBank) return;
+    setBanks((prev) =>
+      prev.map((b) =>
+        b.id === activeBank.id ? { ...b, transactions: b.transactions.filter((t) => t.id !== txId) } : b
+      )
+    );
+  }
+
+  function deleteBank(bankId) {
+    setBanks((prev) => {
+      const next = prev.filter((b) => b.id !== bankId);
+      if (activeId === bankId) setActiveId(next[0] ? next[0].id : null);
+      return next;
+    });
+  }
+
+  function restoreBackup(data) {
+    if (!data || !Array.isArray(data.banks)) return false;
+    setBanks(data.banks);
+    setActiveId(data.activeId || (data.banks[0] && data.banks[0].id) || null);
+    setModal(null);
+    return true;
+  }
+
+  function addEntry(listName, value) {
+    const v = (value || '').trim();
+    if (!v) return;
+    if (listName === 'depositors') {
+      setDepositors((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    } else {
+      setDestinations((prev) => (prev.includes(v) ? prev : [...prev, v]));
+    }
+  }
+
+  function generateReport(fromDate, toDate) {
+    if (!activeBank) return;
+    setReportData(computeReport(activeBank, fromDate, toDate));
+    setModal('reportView');
+  }
+
+  function closeModal() {
+    setModal(null);
+    setEditingTx(null);
+  }
+
+  function openEditTx(t) {
+    setEditingTx(t);
+    setModal('editTx');
+  }
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center text-sm text-slate-400">جارِ التحميل...</div>;
+  }
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-slate-100 text-slate-800">
+      {/* شريط الحصالات */}
+      <div className="sticky top-0 z-20 bg-white border-b border-slate-200">
+        <div className="flex items-stretch gap-1 overflow-x-auto no-scrollbar px-3 pt-3">
+          {banks.map((bank) => {
+            const isActive = bank.id === activeId;
+            return (
+              <button
+                key={bank.id}
+                onClick={() => setActiveId(bank.id)}
+                className={`shrink-0 px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
+                  isActive ? 'text-slate-800' : 'text-slate-400 hover:text-slate-600'
+                }`}
+                style={{ borderBottom: isActive ? `3px solid ${bank.color}` : '3px solid transparent' }}
+              >
+                {bank.name}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => setModal('newBank')}
+            className="shrink-0 flex items-center gap-1 px-3 py-2.5 text-sm text-slate-400 hover:text-slate-700"
+          >
+            <Icon name="plus" size={16} />
+            حصالة جديدة
+          </button>
+        </div>
+      </div>
+
+      {storageError && (
+        <div className="max-w-lg mx-auto mt-3 px-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2">
+            المتصفح مانع الحفظ المحلي، فالبيانات هتضيع لما تقفل الصفحة. جرّب تخرج من وضع التصفح الخفي أو تسمح بتخزين الموقع.
+          </div>
+        </div>
+      )}
+
+      {!activeBank && (
+        <div className="flex flex-col items-center justify-center px-6 py-24 text-center">
+          <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4" style={{ background: 'rgba(6,78,59,0.08)' }}>
+            <Icon name="wallet" size={24} style={{ color: INK.dark }} />
+          </div>
+          <h2 className="font-serif-ar text-xl mb-2">ابدأ بإنشاء أول حصالة</h2>
+          <p className="text-sm text-slate-500 mb-5 max-w-xs">
+            كل حصالة بتتبع رصيدها بشكل مستقل، مقسّم حسب طريقة الإيداع
+          </p>
+          <button onClick={() => setModal('newBank')} className="px-5 py-2.5 rounded-lg text-white text-sm" style={{ background: INK.dark }}>
+            إنشاء حصالة
+          </button>
+        </div>
+      )}
+
+      {activeBank &&
+        (() => {
+          const { totals, balance } = bankTotals(activeBank);
+          const totalAbs = Math.max(1, Object.values(totals).reduce((s, v) => s + Math.abs(v), 0));
+          return (
+            <div className="max-w-lg mx-auto px-4 pb-16 pt-6">
+              <div className="mb-6 text-center">
+                <div className="text-xs text-slate-400 mb-1">{activeBank.name}</div>
+                <div className="flex items-baseline justify-center gap-2">
+                  <span className="font-serif-ar text-6xl font-semibold" dir="ltr" style={{ color: INK.dark }}>
+                    {formatAmount(balance)}
+                  </span>
+                  <span className="text-base text-slate-500">ج.م</span>
+                </div>
+                <button
+                  onClick={() => setModal('editBalance')}
+                  className="mt-2 inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600"
+                >
+                  <Icon name="pencil" size={12} />
+                  تعديل الرصيد الابتدائي
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                <button
+                  onClick={() => setModal('deposit')}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-medium"
+                  style={{ background: INK.deposit }}
+                >
+                  <Icon name="plus" size={16} /> إيداع جديد
+                </button>
+                <button
+                  onClick={() => setModal('expense')}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-medium"
+                  style={{ background: INK.expense }}
+                >
+                  <Icon name="minus" size={16} /> صرف جديد
+                </button>
+              </div>
+
+              <div className="flex items-start justify-center gap-6 mb-7">
+                {Object.entries(METHODS).map(([key, m]) => {
+                  const val = totals[key] || 0;
+                  const pct = Math.round((Math.abs(val) / totalAbs) * 100);
+                  const r = 22;
+                  const c = 2 * Math.PI * r;
+                  return (
+                    <div key={key} className="flex flex-col items-center gap-1">
+                      <div className="relative w-14 h-14">
+                        <svg viewBox="0 0 56 56" className="w-14 h-14 -rotate-90">
+                          <circle cx="28" cy="28" r={r} fill="none" stroke="#E2E8F0" strokeWidth="4" />
+                          <circle
+                            cx="28"
+                            cy="28"
+                            r={r}
+                            fill="none"
+                            stroke={m.hex}
+                            strokeWidth="4"
+                            strokeLinecap="round"
+                            strokeDasharray={`${(pct / 100) * c} ${c}`}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <Icon name={m.icon} size={14} style={{ color: m.hex }} />
+                        </div>
+                      </div>
+                      <span className="text-[11px] text-slate-400">{m.label}</span>
+                      <span dir="ltr" className="text-[11px] text-slate-400 tabular-nums">
+                        {formatAmount(val)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs text-slate-400">سجل المعاملات</div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setModal('reportPeriod')}
+                      className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+                    >
+                      <Icon name="file" size={12} />
+                      تقرير PDF
+                    </button>
+                    <button
+                      onClick={() => setModal('backup')}
+                      className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+                    >
+                      <Icon name="archive" size={12} />
+                      نسخة احتياطية
+                    </button>
+                    <button onClick={() => setModal('deleteBank')} className="text-xs text-slate-400 hover:text-rose-600">
+                      حذف الحصالة
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  {[
+                    ['all', 'الكل'],
+                    ['deposit', 'إيداع'],
+                    ['expense', 'صرف'],
+                  ].map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => setFilterType(val)}
+                      className="px-3 py-1.5 rounded-full text-xs border"
+                      style={
+                        filterType === val
+                          ? { background: INK.dark, borderColor: INK.dark, color: 'white' }
+                          : { background: 'white', borderColor: '#E2E8F0', color: '#64748B' }
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <select
+                    value={filterMethod}
+                    onChange={(e) => setFilterMethod(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-full text-xs border border-slate-200 bg-white text-slate-500"
+                  >
+                    <option value="all">كل الطرق</option>
+                    {Object.entries(METHODS).map(([k, m]) => (
+                      <option key={k} value={k}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {filteredTx.length === 0 ? (
+                  <div className="text-center py-10 text-sm text-slate-400">لا توجد معاملات مطابقة</div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                    {filteredTx.map((t) => {
+                      const m = METHODS[t.method] || METHODS.cash;
+                      const isDeposit = t.type === 'deposit';
+                      return (
+                        <div key={t.id} className="group flex items-center gap-3 px-3 py-3">
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                            style={{ background: `${m.hex}1A` }}
+                          >
+                            <Icon name={m.icon} size={14} style={{ color: m.hex }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm truncate">
+                              {t.note ? (isDeposit ? `إيداع من ${t.note}` : t.note) : isDeposit ? 'إيداع' : 'صرف'}
+                            </div>
+                            <div className="text-xs text-slate-400 flex items-center gap-1">
+                              {formatShort(t.date, t.time)}
+                              {t.editedAt && <span className="text-[10px] text-slate-300">· معدّل</span>}
+                            </div>
+                          </div>
+                          <span
+                            dir="ltr"
+                            className="text-sm font-medium tabular-nums shrink-0"
+                            style={{ color: isDeposit ? INK.deposit : INK.expense }}
+                          >
+                            {isDeposit ? '+' : '\u2212'}
+                            {formatAmount(t.amount)}
+                          </span>
+                          <div className="flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
+                            <button
+                              onClick={() => openEditTx(t)}
+                              aria-label="تعديل المعاملة"
+                              className="text-slate-300 hover:text-slate-600 p-1"
+                            >
+                              <Icon name="pencil" size={13} />
+                            </button>
+                            <button
+                              onClick={() => deleteTransaction(t.id)}
+                              aria-label="حذف المعاملة"
+                              className="text-slate-300 hover:text-rose-600 p-1"
+                            >
+                              <Icon name="trash" size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+      {modal === 'newBank' && <NewBankModal onClose={() => setModal(null)} onCreate={createBank} usedCount={banks.length} />}
+      {modal === 'editBalance' && activeBank && (
+        <EditBalanceModal current={activeBank.initialBalance || 0} onClose={() => setModal(null)} onSave={updateInitialBalance} />
+      )}
+      {(modal === 'deposit' || modal === 'expense' || modal === 'editTx') &&
+        (() => {
+          const txType = modal === 'editTx' ? editingTx.type : modal;
+          const isDep = txType === 'deposit';
+          return (
+            <TxModal
+              type={txType}
+              initialData={modal === 'editTx' ? editingTx : null}
+              list={isDep ? depositors : destinations}
+              onAddEntry={(v) => addEntry(isDep ? 'depositors' : 'destinations', v)}
+              onClose={closeModal}
+              onSubmit={(data) => {
+                if (modal === 'editTx') editTransaction(editingTx.id, data);
+                else addTransaction(modal, data);
+              }}
+            />
+          );
+        })()}
+      {modal === 'backup' && <BackupModal data={{ banks, activeId }} onClose={() => setModal(null)} onRestore={restoreBackup} />}
+      {modal === 'reportPeriod' && activeBank && (
+        <ReportPeriodModal onClose={() => setModal(null)} onGenerate={generateReport} />
+      )}
+      {modal === 'reportView' && reportData && (
+        <ReportView report={reportData} onBack={() => { setModal(null); setReportData(null); }} />
+      )}
+      {modal === 'deleteBank' && activeBank && (
+        <ConfirmModal
+          title="حذف الحصالة"
+          message={`هل تريد حذف "${activeBank.name}" وكل معاملاتها؟ لا يمكن التراجع عن ذلك.`}
+          onCancel={() => setModal(null)}
+          onConfirm={() => {
+            deleteBank(activeBank.id);
+            setModal(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalShell({ title, onClose, children }) {
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 animate-fade-in" style={{ background: 'rgba(15,23,42,0.35)' }} onClick={onClose} />
+      <div
+        dir="rtl"
+        role="dialog"
+        aria-modal="true"
+        className="relative bg-white w-full sm:w-96 sm:rounded-2xl rounded-t-2xl p-5 max-h-[90vh] overflow-y-auto animate-modal-in"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-serif-ar text-lg">{title}</h3>
+          <button onClick={onClose} aria-label="إغلاق" className="text-slate-400 hover:text-slate-700">
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function NewBankModal({ onClose, onCreate, usedCount }) {
+  const [name, setName] = useState('');
+  const [initial, setInitial] = useState('');
+  const [color, setColor] = useState(PALETTE[usedCount % PALETTE.length]);
+
+  return (
+    <ModalShell title="حصالة جديدة" onClose={onClose}>
+      <label className="block text-xs text-slate-400 mb-1.5">اسم الحصالة</label>
+      <input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="مثال: حصالة الطوارئ"
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-300"
+      />
+      <label className="block text-xs text-slate-400 mb-1.5">رصيد ابتدائي (اختياري)</label>
+      <input
+        type="number"
+        inputMode="decimal"
+        dir="ltr"
+        value={initial}
+        onChange={(e) => setInitial(e.target.value)}
+        placeholder="0"
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-left mb-4 focus:outline-none focus:ring-2 focus:ring-slate-300"
+      />
+      <label className="block text-xs text-slate-400 mb-2">اللون المميز</label>
+      <div className="flex gap-2 mb-5">
+        {PALETTE.map((c) => (
+          <button
+            key={c}
+            onClick={() => setColor(c)}
+            aria-label={`اختيار اللون ${c}`}
+            className="w-7 h-7 rounded-full flex items-center justify-center"
+            style={{ background: c }}
+          >
+            {color === c && <Icon name="check" size={13} className="text-white" />}
+          </button>
+        ))}
+      </div>
+      <button
+        disabled={!name.trim()}
+        onClick={() => onCreate(name.trim(), color, initial)}
+        className="w-full py-3 rounded-lg text-white text-sm font-medium"
+        style={{ background: INK.dark, opacity: name.trim() ? 1 : 0.4 }}
+      >
+        إنشاء
+      </button>
+    </ModalShell>
+  );
+}
+
+function EditBalanceModal({ current, onClose, onSave }) {
+  const [value, setValue] = useState(String(current || 0));
+  return (
+    <ModalShell title="تعديل الرصيد الابتدائي" onClose={onClose}>
+      <p className="text-xs text-slate-400 mb-3">
+        القيمة دي بتتضاف للرصيد الكلي قبل أي إيداعات أو مصروفات، ومش بتدخل في توزيع طرق الدفع.
+      </p>
+      <label className="block text-xs text-slate-400 mb-1.5">الرصيد الابتدائي</label>
+      <input
+        autoFocus
+        type="number"
+        inputMode="decimal"
+        dir="ltr"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-left mb-5 focus:outline-none focus:ring-2 focus:ring-slate-300"
+      />
+      <button onClick={() => onSave(value)} className="w-full py-3 rounded-lg text-white text-sm font-medium" style={{ background: INK.dark }}>
+        حفظ
+      </button>
+    </ModalShell>
+  );
+}
+
+function TxModal({ type, initialData, list, onAddEntry, onClose, onSubmit }) {
+  const isDeposit = type === 'deposit';
+  const isEdit = !!initialData;
+  const [amount, setAmount] = useState(initialData ? String(initialData.amount) : '');
+  const [date, setDate] = useState(initialData ? initialData.date : todayStr());
+  const [time, setTime] = useState(initialData && initialData.time ? initialData.time : nowTimeStr());
+  const [method, setMethod] = useState(initialData ? initialData.method : 'cash');
+  const [note, setNote] = useState(initialData ? initialData.note || '' : '');
+  const [addingNew, setAddingNew] = useState(false);
+  const [newEntry, setNewEntry] = useState('');
+  const [showDateTime, setShowDateTime] = useState(false);
+
+  const valid = Number(amount) > 0 && !!date;
+  const displayList = note && !list.includes(note) ? [note, ...list] : list;
+
+  function confirmNewEntry() {
+    const v = newEntry.trim();
+    if (!v) {
+      setAddingNew(false);
+      return;
+    }
+    onAddEntry(v);
+    setNote(v);
+    setNewEntry('');
+    setAddingNew(false);
+  }
+
+  return (
+    <ModalShell
+      title={isEdit ? (isDeposit ? 'تعديل الإيداع' : 'تعديل الصرف') : isDeposit ? 'إيداع جديد' : 'صرف جديد'}
+      onClose={onClose}
+    >
+      <label className="block text-xs text-slate-400 mb-1.5">المبلغ</label>
+      <div className="relative mb-4">
+        <input
+          autoFocus
+          type="number"
+          inputMode="decimal"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="0"
+          dir="ltr"
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-left focus:outline-none focus:ring-2 focus:ring-slate-300"
+        />
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">ج.م</span>
+      </div>
+
+      <label className="block text-xs text-slate-400 mb-1.5">{isDeposit ? 'إيداع من' : 'جهة الصرف'}</label>
+      {!addingNew ? (
+        <div className="flex gap-2 mb-4">
+          <select
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
+          >
+            <option value="">اختر من القائمة</option>
+            {displayList.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setAddingNew(true)}
+            className="px-3 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 text-sm shrink-0"
+          >
+            + جديد
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2 mb-4">
+          <input
+            autoFocus
+            value={newEntry}
+            onChange={(e) => setNewEntry(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmNewEntry();
+              }
+            }}
+            placeholder={isDeposit ? 'اسم الشخص المودِع — مثال: محمد أحمد' : 'مثال: سوبر ماركت'}
+            className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+          <button
+            type="button"
+            onClick={confirmNewEntry}
+            className="px-3 rounded-lg text-white text-sm shrink-0"
+            style={{ background: INK.dark }}
+          >
+            إضافة
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAddingNew(false);
+              setNewEntry('');
+            }}
+            className="px-2 text-slate-400 hover:text-slate-600 shrink-0"
+          >
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* التاريخ والساعة: بيتسجلوا تلقائيًا، وتقدر تعدّلهم */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <Icon name="clock" size={14} className="text-slate-400 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-sm truncate">{formatDateTime(date, time)}</div>
+              {!isEdit && !showDateTime && <div className="text-[11px] text-slate-400">اتسجّل تلقائيًا</div>}
+            </div>
+          </div>
+          <button
+            onClick={() => setShowDateTime((v) => !v)}
+            className="text-xs shrink-0 px-2 py-1 rounded-md text-slate-500 hover:text-slate-800 hover:bg-white"
+          >
+            {showDateTime ? 'تم' : 'تعديل'}
+          </button>
+        </div>
+
+        {showDateTime && (
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">التاريخ</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">الساعة</label>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                dir="ltr"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+            <button
+              onClick={() => {
+                setDate(todayStr());
+                setTime(nowTimeStr());
+              }}
+              className="col-span-2 text-xs text-slate-400 hover:text-slate-700 py-1"
+            >
+              رجّع تاريخ وساعة دلوقتي
+            </button>
+          </div>
+        )}
+      </div>
+
+      <label className="block text-xs text-slate-400 mb-2">{isDeposit ? 'طريقة الإدخال' : 'طريقة الخصم'}</label>
+      <div className="grid grid-cols-3 gap-2 mb-5">
+        {Object.entries(METHODS).map(([key, m]) => {
+          const active = method === key;
+          return (
+            <button
+              key={key}
+              onClick={() => setMethod(key)}
+              className="flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs"
+              style={{
+                borderColor: active ? m.hex : '#E2E8F0',
+                background: active ? `${m.hex}14` : 'white',
+                color: active ? m.hex : '#64748B',
+              }}
+            >
+              <Icon name={m.icon} size={15} />
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        disabled={!valid}
+        onClick={() => onSubmit({ amount, date, time, method, note: note.trim() })}
+        className="w-full py-3 rounded-lg text-white text-sm font-medium"
+        style={{ background: isDeposit ? INK.deposit : INK.expense, opacity: valid ? 1 : 0.4 }}
+      >
+        {isEdit ? 'حفظ التعديلات' : isDeposit ? 'إضافة الإيداع' : 'إضافة الصرف'}
+      </button>
+    </ModalShell>
+  );
+}
+
+function BackupModal({ data, onClose, onRestore }) {
+  const [text, setText] = useState(JSON.stringify(data, null, 2));
+  const [status, setStatus] = useState('');
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus('اتنسخت البيانات. احفظها في مكان آمن.');
+    } catch (e) {
+      setStatus('المتصفح منع النسخ. حدّد النص يدويًا وانسخه.');
+    }
+  }
+
+  function restore() {
+    try {
+      const parsed = JSON.parse(text);
+      const ok = onRestore(parsed);
+      if (!ok) setStatus('الملف مش بالشكل المتوقع. لازم يحتوي على قائمة banks.');
+    } catch (e) {
+      setStatus('النص مش JSON صالح.');
+    }
+  }
+
+  return (
+    <ModalShell title="نسخة احتياطية" onClose={onClose}>
+      <p className="text-xs text-slate-400 mb-3">
+        البيانات محفوظة على الجهاز ده بس. انسخ النص وخزّنه، ولو نقلت الجهاز الصق النص هنا واضغط استعادة.
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        dir="ltr"
+        rows={8}
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-xs text-left font-mono mb-3 focus:outline-none focus:ring-2 focus:ring-slate-300"
+      />
+      {status && <div className="text-xs text-slate-500 mb-3">{status}</div>}
+      <div className="flex gap-2">
+        <button onClick={copy} className="flex-1 py-2.5 rounded-lg text-white text-sm" style={{ background: INK.dark }}>
+          نسخ البيانات
+        </button>
+        <button onClick={restore} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600">
+          استعادة
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ConfirmModal({ title, message, onCancel, onConfirm }) {
+  return (
+    <ModalShell title={title} onClose={onCancel}>
+      <p className="text-sm text-slate-500 mb-5">{message}</p>
+      <div className="flex gap-2">
+        <button onClick={onCancel} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-500">
+          إلغاء
+        </button>
+        <button onClick={onConfirm} className="flex-1 py-2.5 rounded-lg text-white text-sm" style={{ background: INK.expense }}>
+          حذف
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ReportPeriodModal({ onClose, onGenerate }) {
+  const [from, setFrom] = useState(startOfMonthStr(0));
+  const [to, setTo] = useState(todayStr());
+
+  function preset(kind) {
+    if (kind === 'thisMonth') {
+      setFrom(startOfMonthStr(0));
+      setTo(todayStr());
+    } else if (kind === 'lastMonth') {
+      setFrom(startOfMonthStr(-1));
+      setTo(endOfMonthStr(-1));
+    } else if (kind === 'all') {
+      setFrom('');
+      setTo(todayStr());
+    }
+  }
+
+  const invalid = from && to && from > to;
+
+  return (
+    <ModalShell title="تقرير جديد" onClose={onClose}>
+      <p className="text-xs text-slate-400 mb-3">اختر الفترة اللي عايز تشوف معاملاتها ورصيدها الختامي.</p>
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <button onClick={() => preset('thisMonth')} className="px-3 py-1.5 rounded-full text-xs border border-slate-200 text-slate-500 hover:bg-slate-50">
+          هذا الشهر
+        </button>
+        <button onClick={() => preset('lastMonth')} className="px-3 py-1.5 rounded-full text-xs border border-slate-200 text-slate-500 hover:bg-slate-50">
+          الشهر اللي فات
+        </button>
+        <button onClick={() => preset('all')} className="px-3 py-1.5 rounded-full text-xs border border-slate-200 text-slate-500 hover:bg-slate-50">
+          من البداية
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-5">
+        <div>
+          <label className="block text-xs text-slate-400 mb-1.5">من تاريخ</label>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-400 mb-1.5">إلى تاريخ</label>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </div>
+      </div>
+      {invalid && <p className="text-xs text-rose-500 mb-3">تاريخ البداية لازم يكون قبل تاريخ النهاية.</p>}
+      <button
+        disabled={invalid}
+        onClick={() => onGenerate(from, to)}
+        className="w-full py-3 rounded-lg text-white text-sm font-medium"
+        style={{ background: INK.dark, opacity: invalid ? 0.4 : 1 }}
+      >
+        عرض التقرير
+      </button>
+    </ModalShell>
+  );
+}
+
+function ReportView({ report, onBack }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-fade-in">
+      <div className="no-print sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+        <button onClick={onBack} className="text-sm text-slate-500 hover:text-slate-800">
+          → رجوع
+        </button>
+        <button onClick={() => window.print()} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: INK.dark }}>
+          طباعة / حفظ PDF
+        </button>
+      </div>
+
+      <div id="printable-report" className="max-w-lg mx-auto px-5 py-6" dir="rtl">
+        <h1 className="font-serif-ar text-xl mb-1">تقرير — {report.bankName}</h1>
+        <div className="text-xs text-slate-500 mb-6 leading-5">
+          الفترة: {report.fromDate ? formatDateOnly(report.fromDate) : 'من البداية'} — {report.toDate ? formatDateOnly(report.toDate) : 'اليوم'}
+          <br />
+          تاريخ الإصدار: {formatDateOnly(todayStr())}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-6 text-sm">
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">الرصيد الافتتاحي</div>
+            <div dir="ltr" className="font-medium">
+              {formatAmount(report.opening)} ج.م
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">الرصيد الختامي (الإجمالي)</div>
+            <div dir="ltr" className="font-medium" style={{ color: INK.dark }}>
+              {formatAmount(report.closing)} ج.م
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">إجمالي الإيداعات</div>
+            <div dir="ltr" className="font-medium" style={{ color: INK.deposit }}>
+              +{formatAmount(report.depositTotal)} ج.م
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">إجمالي المصروفات</div>
+            <div dir="ltr" className="font-medium" style={{ color: INK.expense }}>
+              -{formatAmount(report.expenseTotal)} ج.م
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <div className="text-xs text-slate-400 mb-2">التوزيع حسب طريقة الدفع خلال الفترة</div>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 text-slate-400">
+                <th className="text-right py-1.5 font-normal">الطريقة</th>
+                <th className="text-right py-1.5 font-normal">إيداعات</th>
+                <th className="text-right py-1.5 font-normal">مصروفات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(METHODS).map(([key, m]) => (
+                <tr key={key} className="border-b border-slate-100">
+                  <td className="py-1.5">{m.label}</td>
+                  <td dir="ltr" className="py-1.5">
+                    {formatAmount(report.byMethod[key].deposit)}
+                  </td>
+                  <td dir="ltr" className="py-1.5">
+                    {formatAmount(report.byMethod[key].expense)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <div className="text-xs text-slate-400 mb-2">سجل المعاملات ({report.rows.length})</div>
+          {report.rows.length === 0 ? (
+            <div className="text-sm text-slate-400 py-6 text-center">لا توجد معاملات في هذه الفترة</div>
+          ) : (
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-400">
+                  <th className="text-right py-1.5 font-normal">التاريخ</th>
+                  <th className="text-right py-1.5 font-normal">النوع</th>
+                  <th className="text-right py-1.5 font-normal">الطريقة</th>
+                  <th className="text-right py-1.5 font-normal">البيان</th>
+                  <th className="text-left py-1.5 font-normal">المبلغ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rows.map((t) => (
+                  <tr key={t.id} className="border-b border-slate-100">
+                    <td className="py-1.5">{formatShort(t.date, t.time)}</td>
+                    <td className="py-1.5">{t.type === 'deposit' ? 'إيداع' : 'صرف'}</td>
+                    <td className="py-1.5">{(METHODS[t.method] || {}).label || ''}</td>
+                    <td className="py-1.5">{t.note || '—'}</td>
+                    <td
+                      dir="ltr"
+                      className="py-1.5 text-left"
+                      style={{ color: t.type === 'deposit' ? INK.deposit : INK.expense }}
+                    >
+                      {t.type === 'deposit' ? '+' : '\u2212'}
+                      {formatAmount(t.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+<script>
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
+</script>
+</body>
+</html>
