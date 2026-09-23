@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>الحصالة — متابعة الإيداعات والمصروفات</title>
-<meta name="description" content="تطبيق بسيط لمتابعة الحصالة والإيداعات والمصروفات شهرياً." />
+<meta name="description" content="تطبيق بسيط لمتابعة أكثر من حصالة: إيداعات، مصروفات، وتقسيم حسب طريقة الدفع (كاش، إنستاباي، فودافون كاش)." />
 <meta name="theme-color" content="#064E3B" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="icon-192.png" />
@@ -53,8 +53,15 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef } = React;
 
-const STORAGE_KEY = 'piggybank-tracker-v2-state';
+const STORAGE_KEY = 'piggybank-tracker-state';
 const INK = { dark: '#064E3B', deposit: '#059669', expense: '#BE123C' };
+
+const METHODS = {
+  cash: { label: 'كاش', hex: '#CA8A04', icon: 'banknote' },
+  instapay: { label: 'InstaPay', hex: '#0369A1', icon: 'send' },
+  vodafone: { label: 'فودافون كاش', hex: '#A21CAF', icon: 'wallet' },
+};
+
 const PALETTE = ['#0D9488', '#EA580C', '#7C3AED', '#0891B2', '#65A30D', '#DB2777'];
 
 const ICON_PATHS = {
@@ -66,6 +73,15 @@ const ICON_PATHS = {
       <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />
     </>
   ),
+  banknote: (
+    <>
+      <rect width="20" height="12" x="2" y="6" rx="2" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M6 12h.01M18 12h.01" />
+    </>
+  ),
+  send: <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>,
+  smartphone: <><rect width="14" height="20" x="5" y="2" rx="2" ry="2" /><path d="M12 18h.01" /></>,
   trash: (
     <>
       <path d="M3 6h18" />
@@ -83,6 +99,7 @@ const ICON_PATHS = {
       <path d="m15 5 4 4" />
     </>
   ),
+  clock: <><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></>,
   archive: (
     <>
       <rect width="20" height="5" x="2" y="3" rx="1" />
@@ -99,14 +116,6 @@ const ICON_PATHS = {
       <path d="M16 17H8" />
     </>
   ),
-  chevronLeft: <path d="m15 18-6-6 6-6" />,
-  chevronRight: <path d="m9 18 6-6-6-6" />,
-  lock: (
-    <>
-      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </>
-  )
 };
 
 function Icon({ name, size = 16, style, className }) {
@@ -143,125 +152,116 @@ function todayStr() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function currentMonthKeyStr() {
+function nowTimeStr() {
   const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function formatAmount(n) {
   return Number(n || 0).toLocaleString('en-US');
 }
 
+function formatDateTime(dateStr, timeStr) {
+  try {
+    const d = new Date(`${dateStr}T${timeStr || '00:00'}`);
+    if (isNaN(d.getTime())) return dateStr || '';
+    const datePart = d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
+    const timePart = d.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit' });
+    return `${datePart} — ${timePart}`;
+  } catch (e) {
+    return dateStr || '';
+  }
+}
+
+function formatShort(dateStr, timeStr) {
+  try {
+    const d = new Date(`${dateStr}T${timeStr || '00:00'}`);
+    if (isNaN(d.getTime())) return dateStr || '';
+    const datePart = d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' });
+    const timePart = d.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit' });
+    return `${datePart}، ${timePart}`;
+  } catch (e) {
+    return dateStr || '';
+  }
+}
+
+function bankTotals(bank) {
+  const totals = { cash: 0, instapay: 0, vodafone: 0 };
+  let balance = Number(bank.initialBalance || 0);
+  (bank.transactions || []).forEach((t) => {
+    const sign = t.type === 'deposit' ? 1 : -1;
+    totals[t.method] = (totals[t.method] || 0) + sign * Number(t.amount || 0);
+    balance += sign * Number(t.amount || 0);
+  });
+  return { totals, balance };
+}
+
 function formatDateOnly(dateStr) {
   try {
-    if (!dateStr) return '';
-    const d = new Date(`${dateStr}T00:00:00`);
-    if (isNaN(d.getTime())) return dateStr;
+    const d = new Date(`${dateStr}T00:00`);
+    if (isNaN(d.getTime())) return dateStr || '';
     return d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
   } catch (e) {
     return dateStr || '';
   }
 }
 
-function formatMonthName(monthKey) {
-  try {
-    const [year, month] = monthKey.split('-');
-    const d = new Date(Number(year), Number(month) - 1, 1);
-    return d.toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' });
-  } catch(e) {
-    return monthKey;
-  }
+function startOfMonthStr(offsetMonths) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offsetMonths);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function getNextMonthKey(monthKey) {
-  const [year, month] = monthKey.split('-').map(Number);
-  const d = new Date(year, month, 1);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-}
-
-function getPrevMonthKey(monthKey) {
-  const [year, month] = monthKey.split('-').map(Number);
-  const d = new Date(year, month - 2, 1);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-}
-
-function startOfMonthStr(monthKey) {
-  return `${monthKey}-01`;
-}
-
-function endOfMonthStr(monthKey) {
-  const [y, m] = monthKey.split('-').map(Number);
-  const d = new Date(y, m, 0);
-  return `${monthKey}-${pad(d.getDate())}`;
-}
-
-function getMonthOpeningBalance(bank, monthKey) {
-  if (!bank.months) return 0;
-  const sortedMonths = Object.keys(bank.months).sort();
-  if (sortedMonths.length === 0 || monthKey <= sortedMonths[0]) {
-    return 0;
-  }
-
-  let cumulative = 0;
-  for (const m of sortedMonths) {
-    if (m >= monthKey) break;
-    const mData = bank.months[m] || { transactions: [] };
-    const deposits = (mData.transactions || [])
-      .filter(t => t.type === 'deposit')
-      .reduce((sum, t) => sum + Number(t.amount || 0), 0);
-    const expenses = (mData.transactions || [])
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + Number(t.amount || 0), 0);
-    cumulative += (deposits - expenses);
-  }
-  return cumulative;
+function endOfMonthStr(offsetMonths) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offsetMonths + 1);
+  d.setDate(0);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function computeReport(bank, fromDate, toDate) {
-  let opening = 0;
+  let opening = Number(bank.initialBalance || 0);
+  const rows = [];
+  const byMethod = {
+    cash: { deposit: 0, expense: 0 },
+    instapay: { deposit: 0, expense: 0 },
+    vodafone: { deposit: 0, expense: 0 },
+  };
   let depositTotal = 0;
   let expenseTotal = 0;
 
-  const depositByTarget = {};
-  const expenseByTarget = {};
-  const rows = [];
-
-  const sortedMonths = Object.keys(bank.months || {}).sort();
-
-  sortedMonths.forEach((m) => {
-    const mData = bank.months[m];
-    (mData.transactions || []).forEach((t) => {
-      const amt = Number(t.amount || 0);
-      const target = t.note || 'غير محدد';
-
-      if (fromDate && t.date < fromDate) {
-        opening += (t.type === 'deposit' ? amt : -amt);
-      } else if (!toDate || t.date <= toDate) {
-        rows.push(t);
-        if (t.type === 'deposit') {
-          depositTotal += amt;
-          depositByTarget[target] = (depositByTarget[target] || 0) + amt;
-        } else {
-          expenseTotal += amt;
-          expenseByTarget[target] = (expenseByTarget[target] || 0) + amt;
-        }
+  (bank.transactions || []).forEach((t) => {
+    const amt = Number(t.amount || 0);
+    if (fromDate && t.date < fromDate) {
+      opening += t.type === 'deposit' ? amt : -amt;
+    } else if (!toDate || t.date <= toDate) {
+      rows.push(t);
+      if (t.type === 'deposit') {
+        depositTotal += amt;
+        if (byMethod[t.method]) byMethod[t.method].deposit += amt;
+      } else {
+        expenseTotal += amt;
+        if (byMethod[t.method]) byMethod[t.method].expense += amt;
       }
-    });
+    }
   });
 
-  rows.sort((a, b) => a.date.localeCompare(b.date));
+  rows.sort((a, b) => `${a.date}T${a.time || '00:00'}`.localeCompare(`${b.date}T${b.time || '00:00'}`));
 
   return {
     bankName: bank.name,
     fromDate,
     toDate,
     rows,
-    opening,
     depositTotal,
     expenseTotal,
+    net: depositTotal - expenseTotal,
+    opening,
     closing: opening + depositTotal - expenseTotal,
-    depositByTarget,
-    expenseByTarget,
+    byMethod,
+    generatedAt: new Date().toISOString(),
   };
 }
 
@@ -288,8 +288,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [banks, setBanks] = useState([]);
   const [activeId, setActiveId] = useState(null);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonthKeyStr());
   const [filterType, setFilterType] = useState('all');
+  const [filterMethod, setFilterMethod] = useState('all');
   const [modal, setModal] = useState(null);
   const [editingTx, setEditingTx] = useState(null);
   const [storageError, setStorageError] = useState(false);
@@ -318,101 +318,63 @@ function App() {
 
   const activeBank = banks.find((b) => b.id === activeId) || null;
 
-  const currentMonthData = activeBank && activeBank.months ? (activeBank.months[selectedMonth] || { transactions: [], closed: false }) : { transactions: [], closed: false };
-  const openingBalance = activeBank ? getMonthOpeningBalance(activeBank, selectedMonth) : 0;
+  const filteredTx = activeBank
+    ? activeBank.transactions.filter(
+        (t) =>
+          (filterType === 'all' || t.type === filterType) &&
+          (filterMethod === 'all' || t.method === filterMethod)
+      )
+    : [];
 
-  const monthlyDeposits = currentMonthData.transactions
-    .filter(t => t.type === 'deposit')
-    .reduce((acc, t) => acc + Number(t.amount || 0), 0);
-
-  const monthlyExpenses = currentMonthData.transactions
-    .filter(t => t.type === 'expense')
-    .reduce((acc, t) => acc + Number(t.amount || 0), 0);
-
-  const currentMonthClosing = openingBalance + monthlyDeposits - monthlyExpenses;
-
-  const filteredTx = currentMonthData.transactions.filter(
-    (t) => filterType === 'all' || t.type === filterType
-  );
-
-  function createBank(name, color) {
-    const startM = currentMonthKeyStr();
-    const nb = { 
-      id: uid(), 
-      name, 
-      color, 
-      months: {
-        [startM]: { transactions: [], closed: false }
-      } 
-    };
+  function createBank(name, color, initialBalance) {
+    const nb = { id: uid(), name, color, initialBalance: Number(initialBalance) || 0, transactions: [] };
     setBanks((prev) => [...prev, nb]);
     setActiveId(nb.id);
-    setSelectedMonth(startM);
     setModal(null);
   }
 
-  function addTransaction(type, { amount, date, note }) {
+  function updateInitialBalance(value) {
+    if (!activeBank) return;
+    setBanks((prev) =>
+      prev.map((b) => (b.id === activeBank.id ? { ...b, initialBalance: Number(value) || 0 } : b))
+    );
+    setModal(null);
+  }
+
+  function addTransaction(type, { amount, date, time, method, note }) {
     if (!activeBank) return;
     const tx = {
       id: uid(),
       type,
       amount: Number(amount),
       date,
+      time,
+      method,
       note,
       createdAt: new Date().toISOString(),
+      editedAt: null,
     };
-
     setBanks((prev) =>
-      prev.map((b) => {
-        if (b.id !== activeBank.id) return b;
-        const mKey = date.slice(0, 7);
-        const monthObj = b.months[mKey] || { transactions: [], closed: false };
-        return {
-          ...b,
-          months: {
-            ...b.months,
-            [mKey]: {
-              ...monthObj,
-              transactions: [tx, ...(monthObj.transactions || [])]
-            }
-          }
-        };
-      })
+      prev.map((b) => (b.id === activeBank.id ? { ...b, transactions: [tx, ...b.transactions] } : b))
     );
     closeModal();
   }
 
-  function editTransaction(txId, { amount, date, note }) {
+  function editTransaction(txId, { amount, date, time, method, note }) {
     if (!activeBank) return;
     setBanks((prev) =>
-      prev.map((b) => {
-        if (b.id !== activeBank.id) return b;
-        const newMonths = { ...b.months };
-        
-        Object.keys(newMonths).forEach(mKey => {
-          newMonths[mKey] = {
-            ...newMonths[mKey],
-            transactions: newMonths[mKey].transactions.filter(t => t.id !== txId)
-          };
-        });
-
-        const mKey = date.slice(0, 7);
-        const targetMonth = newMonths[mKey] || { transactions: [], closed: false };
-        const updatedTx = {
-          ...editingTx,
-          amount: Number(amount),
-          date,
-          note,
-          editedAt: new Date().toISOString()
-        };
-
-        newMonths[mKey] = {
-          ...targetMonth,
-          transactions: [updatedTx, ...targetMonth.transactions]
-        };
-
-        return { ...b, months: newMonths };
-      })
+      prev.map((b) =>
+        b.id === activeBank.id
+          ? {
+              ...b,
+              transactions: b.transactions.map((t) =>
+                t.id === txId
+                  ? { ...t, amount: Number(amount), date, time, method, note, editedAt: new Date().toISOString() }
+                  : t
+              ),
+            }
+          : b
+      )
     );
     closeModal();
   }
@@ -420,41 +382,10 @@ function App() {
   function deleteTransaction(txId) {
     if (!activeBank) return;
     setBanks((prev) =>
-      prev.map((b) => {
-        if (b.id !== activeBank.id) return b;
-        const newMonths = { ...b.months };
-        Object.keys(newMonths).forEach(mKey => {
-          newMonths[mKey] = {
-            ...newMonths[mKey],
-            transactions: newMonths[mKey].transactions.filter(t => t.id !== txId)
-          };
-        });
-        return { ...b, months: newMonths };
-      })
+      prev.map((b) =>
+        b.id === activeBank.id ? { ...b, transactions: b.transactions.filter((t) => t.id !== txId) } : b
+      )
     );
-  }
-
-  function closeCurrentMonth() {
-    if (!activeBank) return;
-    const nextM = getNextMonthKey(selectedMonth);
-    setBanks((prev) =>
-      prev.map((b) => {
-        if (b.id !== activeBank.id) return b;
-        const nextMonthObj = b.months[nextM] || { transactions: [], closed: false };
-        return {
-          ...b,
-          months: {
-            ...b.months,
-            [selectedMonth]: {
-              ...(b.months[selectedMonth] || { transactions: [] }),
-              closed: true
-            },
-            [nextM]: nextMonthObj
-          }
-        };
-      })
-    );
-    setSelectedMonth(nextM);
   }
 
   function deleteBank(bankId) {
@@ -505,50 +436,38 @@ function App() {
 
   return (
     <div dir="rtl" className="min-h-screen bg-slate-100 text-slate-800">
+      {/* شريط الحصالات */}
       <div className="sticky top-0 z-20 bg-white border-b border-slate-200">
-        <div className="flex items-center justify-between px-3 pt-2">
-          <div className="flex items-stretch gap-1 overflow-x-auto no-scrollbar">
-            {banks.map((bank) => {
-              const isActive = bank.id === activeId;
-              return (
-                <button
-                  key={bank.id}
-                  onClick={() => setActiveId(bank.id)}
-                  className={`shrink-0 px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
-                    isActive ? 'text-slate-800 font-semibold' : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                  style={{ borderBottom: isActive ? `3px solid ${bank.color}` : '3px solid transparent' }}
-                >
-                  {bank.name}
-                </button>
-              );
-            })}
-            <button
-              onClick={() => setModal('newBank')}
-              className="shrink-0 flex items-center gap-1 px-3 py-2.5 text-sm text-slate-400 hover:text-slate-700"
-            >
-              <Icon name="plus" size={16} />
-              حصالة جديدة
-            </button>
-          </div>
-
-          {activeBank && (
-            <button
-              onClick={() => setModal('deleteBank')}
-              className="flex items-center gap-1 text-xs text-rose-600 hover:text-rose-800 px-2 py-1.5 rounded-lg hover:bg-rose-50 transition-colors shrink-0"
-              title="حذف الحصالة"
-            >
-              <Icon name="trash" size={15} />
-              <span className="hidden sm:inline">حذف الحصالة</span>
-            </button>
-          )}
+        <div className="flex items-stretch gap-1 overflow-x-auto no-scrollbar px-3 pt-3">
+          {banks.map((bank) => {
+            const isActive = bank.id === activeId;
+            return (
+              <button
+                key={bank.id}
+                onClick={() => setActiveId(bank.id)}
+                className={`shrink-0 px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${
+                  isActive ? 'text-slate-800' : 'text-slate-400 hover:text-slate-600'
+                }`}
+                style={{ borderBottom: isActive ? `3px solid ${bank.color}` : '3px solid transparent' }}
+              >
+                {bank.name}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => setModal('newBank')}
+            className="shrink-0 flex items-center gap-1 px-3 py-2.5 text-sm text-slate-400 hover:text-slate-700"
+          >
+            <Icon name="plus" size={16} />
+            حصالة جديدة
+          </button>
         </div>
       </div>
 
       {storageError && (
         <div className="max-w-lg mx-auto mt-3 px-4">
           <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2">
-            المتصفح مانع الحفظ المحلي، فالبيانات ستضيع عند إغلاق الصفحة.
+            المتصفح مانع الحفظ المحلي، فالبيانات هتضيع لما تقفل الصفحة. جرّب تخرج من وضع التصفح الخفي أو تسمح بتخزين الموقع.
           </div>
         </div>
       )}
@@ -560,7 +479,7 @@ function App() {
           </div>
           <h2 className="font-serif-ar text-xl mb-2">ابدأ بإنشاء أول حصالة</h2>
           <p className="text-sm text-slate-500 mb-5 max-w-xs">
-            تابع الإيداعات والمصروفات شهرياً مع إمكانية التقفيل الدوري
+            كل حصالة بتتبع رصيدها بشكل مستقل، مقسّم حسب طريقة الإيداع
           </p>
           <button onClick={() => setModal('newBank')} className="px-5 py-2.5 rounded-lg text-white text-sm" style={{ background: INK.dark }}>
             إنشاء حصالة
@@ -568,176 +487,200 @@ function App() {
         </div>
       )}
 
-      {activeBank && (
-        <div className="max-w-lg mx-auto px-4 pb-16 pt-4">
-          <div className="flex items-center justify-between bg-white rounded-xl p-2.5 border border-slate-200 mb-5">
-            <button
-              onClick={() => setSelectedMonth(getPrevMonthKey(selectedMonth))}
-              className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg"
-            >
-              <Icon name="chevronRight" size={18} />
-            </button>
-            <div className="text-center font-medium text-sm text-slate-700">
-              {formatMonthName(selectedMonth)}
-            </div>
-            <button
-              onClick={() => setSelectedMonth(getNextMonthKey(selectedMonth))}
-              className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg"
-            >
-              <Icon name="chevronLeft" size={18} />
-            </button>
-          </div>
-
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 mb-6 text-center shadow-sm">
-            <div className="text-xs text-slate-400 mb-1">الرصيد النهائي للشهر</div>
-            <div className="flex items-baseline justify-center gap-2 mb-4">
-              <span className="font-serif-ar text-5xl font-semibold" dir="ltr" style={{ color: INK.dark }}>
-                {formatAmount(currentMonthClosing)}
-              </span>
-              <span className="text-sm text-slate-500">ج.م</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-3">
-              <div className="text-slate-500">
-                <span>الرصيد الافتتاحي: </span>
-                <span dir="ltr" className="font-semibold text-slate-700">{formatAmount(openingBalance)}</span> ج.م
-              </div>
-              <div className="text-slate-500">
-                <span>إجمالي التغير: </span>
-                <span dir="ltr" className="font-semibold" style={{ color: monthlyDeposits - monthlyExpenses >= 0 ? INK.deposit : INK.expense }}>
-                  {monthlyDeposits - monthlyExpenses >= 0 ? '+' : ''}{formatAmount(monthlyDeposits - monthlyExpenses)}
-                </span> ج.م
-              </div>
-            </div>
-
-            {currentMonthData.closed ? (
-              <div className="mt-4 inline-flex items-center gap-1 px-3 py-1 bg-slate-100 text-slate-500 text-xs rounded-full">
-                <Icon name="lock" size={12} />
-                تم تقفيل هذا الشهر
-              </div>
-            ) : (
-              <button
-                onClick={closeCurrentMonth}
-                className="mt-4 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border border-emerald-600 text-emerald-700 hover:bg-emerald-50 text-xs font-medium transition-colors"
-              >
-                تقفيل حصالة الشهر والانتقال للشهر التالي
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            <button
-              onClick={() => setModal('deposit')}
-              className="flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-medium shadow-sm"
-              style={{ background: INK.deposit }}
-            >
-              <Icon name="plus" size={16} /> إيداع جديد
-            </button>
-            <button
-              onClick={() => setModal('expense')}
-              className="flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-medium shadow-sm"
-              style={{ background: INK.expense }}
-            >
-              <Icon name="minus" size={16} /> صرف جديد
-            </button>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-semibold text-slate-500">سجل معاملات الشهر</div>
-              <div className="flex items-center gap-3">
+      {activeBank &&
+        (() => {
+          const { totals, balance } = bankTotals(activeBank);
+          const totalAbs = Math.max(1, Object.values(totals).reduce((s, v) => s + Math.abs(v), 0));
+          return (
+            <div className="max-w-lg mx-auto px-4 pb-16 pt-6">
+              <div className="mb-6 text-center">
+                <div className="text-xs text-slate-400 mb-1">{activeBank.name}</div>
+                <div className="flex items-baseline justify-center gap-2">
+                  <span className="font-serif-ar text-6xl font-semibold" dir="ltr" style={{ color: INK.dark }}>
+                    {formatAmount(balance)}
+                  </span>
+                  <span className="text-base text-slate-500">ج.م</span>
+                </div>
                 <button
-                  onClick={() => setModal('reportPeriod')}
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"
+                  onClick={() => setModal('editBalance')}
+                  className="mt-2 inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600"
                 >
-                  <Icon name="file" size={13} />
-                  تقرير PDF
-                </button>
-                <button
-                  onClick={() => setModal('backup')}
-                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"
-                >
-                  <Icon name="archive" size={13} />
-                  نسخة احتياطية
+                  <Icon name="pencil" size={12} />
+                  تعديل الرصيد الابتدائي
                 </button>
               </div>
-            </div>
 
-            <div className="flex items-center gap-2 mb-3">
-              {[
-                ['all', 'الكل'],
-                ['deposit', 'إيداع'],
-                ['expense', 'صرف'],
-              ].map(([val, label]) => (
+              <div className="grid grid-cols-2 gap-3 mb-6">
                 <button
-                  key={val}
-                  onClick={() => setFilterType(val)}
-                  className="px-3 py-1 rounded-full text-xs border"
-                  style={
-                    filterType === val
-                      ? { background: INK.dark, borderColor: INK.dark, color: 'white' }
-                      : { background: 'white', borderColor: '#E2E8F0', color: '#64748B' }
-                  }
+                  onClick={() => setModal('deposit')}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-medium"
+                  style={{ background: INK.deposit }}
                 >
-                  {label}
+                  <Icon name="plus" size={16} /> إيداع جديد
                 </button>
-              ))}
-            </div>
-
-            {filteredTx.length === 0 ? (
-              <div className="text-center py-10 text-sm text-slate-400 bg-white rounded-xl border border-slate-200">
-                لا توجد معاملات مسجلة لهذا الشهر
+                <button
+                  onClick={() => setModal('expense')}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl text-white text-sm font-medium"
+                  style={{ background: INK.expense }}
+                >
+                  <Icon name="minus" size={16} /> صرف جديد
+                </button>
               </div>
-            ) : (
-              <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden shadow-sm">
-                {filteredTx.map((t) => {
-                  const isDeposit = t.type === 'deposit';
+
+              <div className="flex items-start justify-center gap-6 mb-7">
+                {Object.entries(METHODS).map(([key, m]) => {
+                  const val = totals[key] || 0;
+                  const pct = Math.round((Math.abs(val) / totalAbs) * 100);
+                  const r = 22;
+                  const c = 2 * Math.PI * r;
                   return (
-                    <div key={t.id} className="group flex items-center justify-between px-4 py-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 truncate">
-                          {t.note || (isDeposit ? 'إيداع' : 'صرف')}
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          {formatDateOnly(t.date)}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span
-                          dir="ltr"
-                          className="text-sm font-semibold tabular-nums"
-                          style={{ color: isDeposit ? INK.deposit : INK.expense }}
-                        >
-                          {isDeposit ? '+' : '\u2212'}
-                          {formatAmount(t.amount)}
-                        </span>
-                        <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openEditTx(t)}
-                            aria-label="تعديل"
-                            className="text-slate-300 hover:text-slate-600 p-1"
-                          >
-                            <Icon name="pencil" size={13} />
-                          </button>
-                          <button
-                            onClick={() => deleteTransaction(t.id)}
-                            aria-label="حذف"
-                            className="text-slate-300 hover:text-rose-600 p-1"
-                          >
-                            <Icon name="trash" size={13} />
-                          </button>
+                    <div key={key} className="flex flex-col items-center gap-1">
+                      <div className="relative w-14 h-14">
+                        <svg viewBox="0 0 56 56" className="w-14 h-14 -rotate-90">
+                          <circle cx="28" cy="28" r={r} fill="none" stroke="#E2E8F0" strokeWidth="4" />
+                          <circle
+                            cx="28"
+                            cy="28"
+                            r={r}
+                            fill="none"
+                            stroke={m.hex}
+                            strokeWidth="4"
+                            strokeLinecap="round"
+                            strokeDasharray={`${(pct / 100) * c} ${c}`}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <Icon name={m.icon} size={14} style={{ color: m.hex }} />
                         </div>
                       </div>
+                      <span className="text-[11px] text-slate-400">{m.label}</span>
+                      <span dir="ltr" className="text-[11px] text-slate-400 tabular-nums">
+                        {formatAmount(val)}
+                      </span>
                     </div>
                   );
                 })}
               </div>
-            )}
-          </div>
-        </div>
-      )}
+
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs text-slate-400">سجل المعاملات</div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setModal('reportPeriod')}
+                      className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+                    >
+                      <Icon name="file" size={12} />
+                      تقرير PDF
+                    </button>
+                    <button
+                      onClick={() => setModal('backup')}
+                      className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700"
+                    >
+                      <Icon name="archive" size={12} />
+                      نسخة احتياطية
+                    </button>
+                    <button onClick={() => setModal('deleteBank')} className="text-xs text-slate-400 hover:text-rose-600">
+                      حذف الحصالة
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  {[
+                    ['all', 'الكل'],
+                    ['deposit', 'إيداع'],
+                    ['expense', 'صرف'],
+                  ].map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => setFilterType(val)}
+                      className="px-3 py-1.5 rounded-full text-xs border"
+                      style={
+                        filterType === val
+                          ? { background: INK.dark, borderColor: INK.dark, color: 'white' }
+                          : { background: 'white', borderColor: '#E2E8F0', color: '#64748B' }
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <select
+                    value={filterMethod}
+                    onChange={(e) => setFilterMethod(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-full text-xs border border-slate-200 bg-white text-slate-500"
+                  >
+                    <option value="all">كل الطرق</option>
+                    {Object.entries(METHODS).map(([k, m]) => (
+                      <option key={k} value={k}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {filteredTx.length === 0 ? (
+                  <div className="text-center py-10 text-sm text-slate-400">لا توجد معاملات مطابقة</div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                    {filteredTx.map((t) => {
+                      const m = METHODS[t.method] || METHODS.cash;
+                      const isDeposit = t.type === 'deposit';
+                      return (
+                        <div key={t.id} className="group flex items-center gap-3 px-3 py-3">
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                            style={{ background: `${m.hex}1A` }}
+                          >
+                            <Icon name={m.icon} size={14} style={{ color: m.hex }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm truncate">
+                              {t.note ? (isDeposit ? `إيداع من ${t.note}` : t.note) : isDeposit ? 'إيداع' : 'صرف'}
+                            </div>
+                            <div className="text-xs text-slate-400 flex items-center gap-1">
+                              {formatShort(t.date, t.time)}
+                              {t.editedAt && <span className="text-[10px] text-slate-300">· معدّل</span>}
+                            </div>
+                          </div>
+                          <span
+                            dir="ltr"
+                            className="text-sm font-medium tabular-nums shrink-0"
+                            style={{ color: isDeposit ? INK.deposit : INK.expense }}
+                          >
+                            {isDeposit ? '+' : '\u2212'}
+                            {formatAmount(t.amount)}
+                          </span>
+                          <div className="flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
+                            <button
+                              onClick={() => openEditTx(t)}
+                              aria-label="تعديل المعاملة"
+                              className="text-slate-300 hover:text-slate-600 p-1"
+                            >
+                              <Icon name="pencil" size={13} />
+                            </button>
+                            <button
+                              onClick={() => deleteTransaction(t.id)}
+                              aria-label="حذف المعاملة"
+                              className="text-slate-300 hover:text-rose-600 p-1"
+                            >
+                              <Icon name="trash" size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
       {modal === 'newBank' && <NewBankModal onClose={() => setModal(null)} onCreate={createBank} usedCount={banks.length} />}
+      {modal === 'editBalance' && activeBank && (
+        <EditBalanceModal current={activeBank.initialBalance || 0} onClose={() => setModal(null)} onSave={updateInitialBalance} />
+      )}
       {(modal === 'deposit' || modal === 'expense' || modal === 'editTx') &&
         (() => {
           const txType = modal === 'editTx' ? editingTx.type : modal;
@@ -746,7 +689,6 @@ function App() {
             <TxModal
               type={txType}
               initialData={modal === 'editTx' ? editingTx : null}
-              selectedMonth={selectedMonth}
               list={isDep ? depositors : destinations}
               onAddEntry={(v) => addEntry(isDep ? 'depositors' : 'destinations', v)}
               onClose={closeModal}
@@ -759,15 +701,15 @@ function App() {
         })()}
       {modal === 'backup' && <BackupModal data={{ banks, activeId }} onClose={() => setModal(null)} onRestore={restoreBackup} />}
       {modal === 'reportPeriod' && activeBank && (
-        <ReportPeriodModal defaultMonth={selectedMonth} onClose={() => setModal(null)} onGenerate={generateReport} />
+        <ReportPeriodModal onClose={() => setModal(null)} onGenerate={generateReport} />
       )}
       {modal === 'reportView' && reportData && (
-        <ReportView report={reportData} onClose={() => { setModal(null); setReportData(null); }} />
+        <ReportView report={reportData} onBack={() => { setModal(null); setReportData(null); }} />
       )}
       {modal === 'deleteBank' && activeBank && (
         <ConfirmModal
           title="حذف الحصالة"
-          message={`هل تريد حذف "${activeBank.name}" وكل معلماتها السابقة والشهور بالكامل؟ لا يمكن التراجع عن ذلك.`}
+          message={`هل تريد حذف "${activeBank.name}" وكل معاملاتها؟ لا يمكن التراجع عن ذلك.`}
           onCancel={() => setModal(null)}
           onConfirm={() => {
             deleteBank(activeBank.id);
@@ -795,10 +737,10 @@ function ModalShell({ title, onClose, children }) {
         dir="rtl"
         role="dialog"
         aria-modal="true"
-        className="relative bg-white w-full sm:w-96 sm:rounded-2xl rounded-t-2xl p-5 max-h-[90vh] overflow-y-auto animate-modal-in shadow-xl"
+        className="relative bg-white w-full sm:w-96 sm:rounded-2xl rounded-t-2xl p-5 max-h-[90vh] overflow-y-auto animate-modal-in"
       >
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif-ar text-lg font-bold">{title}</h3>
+          <h3 className="font-serif-ar text-lg">{title}</h3>
           <button onClick={onClose} aria-label="إغلاق" className="text-slate-400 hover:text-slate-700">
             <Icon name="x" size={18} />
           </button>
@@ -811,6 +753,7 @@ function ModalShell({ title, onClose, children }) {
 
 function NewBankModal({ onClose, onCreate, usedCount }) {
   const [name, setName] = useState('');
+  const [initial, setInitial] = useState('');
   const [color, setColor] = useState(PALETTE[usedCount % PALETTE.length]);
 
   return (
@@ -822,6 +765,16 @@ function NewBankModal({ onClose, onCreate, usedCount }) {
         onChange={(e) => setName(e.target.value)}
         placeholder="مثال: حصالة الطوارئ"
         className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-300"
+      />
+      <label className="block text-xs text-slate-400 mb-1.5">رصيد ابتدائي (اختياري)</label>
+      <input
+        type="number"
+        inputMode="decimal"
+        dir="ltr"
+        value={initial}
+        onChange={(e) => setInitial(e.target.value)}
+        placeholder="0"
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-left mb-4 focus:outline-none focus:ring-2 focus:ring-slate-300"
       />
       <label className="block text-xs text-slate-400 mb-2">اللون المميز</label>
       <div className="flex gap-2 mb-5">
@@ -839,30 +792,51 @@ function NewBankModal({ onClose, onCreate, usedCount }) {
       </div>
       <button
         disabled={!name.trim()}
-        onClick={() => onCreate(name.trim(), color)}
+        onClick={() => onCreate(name.trim(), color, initial)}
         className="w-full py-3 rounded-lg text-white text-sm font-medium"
         style={{ background: INK.dark, opacity: name.trim() ? 1 : 0.4 }}
       >
-        إنشاء الحصالة
+        إنشاء
       </button>
     </ModalShell>
   );
 }
 
-function TxModal({ type, initialData, selectedMonth, list, onAddEntry, onClose, onSubmit }) {
+function EditBalanceModal({ current, onClose, onSave }) {
+  const [value, setValue] = useState(String(current || 0));
+  return (
+    <ModalShell title="تعديل الرصيد الابتدائي" onClose={onClose}>
+      <p className="text-xs text-slate-400 mb-3">
+        القيمة دي بتتضاف للرصيد الكلي قبل أي إيداعات أو مصروفات، ومش بتدخل في توزيع طرق الدفع.
+      </p>
+      <label className="block text-xs text-slate-400 mb-1.5">الرصيد الابتدائي</label>
+      <input
+        autoFocus
+        type="number"
+        inputMode="decimal"
+        dir="ltr"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-left mb-5 focus:outline-none focus:ring-2 focus:ring-slate-300"
+      />
+      <button onClick={() => onSave(value)} className="w-full py-3 rounded-lg text-white text-sm font-medium" style={{ background: INK.dark }}>
+        حفظ
+      </button>
+    </ModalShell>
+  );
+}
+
+function TxModal({ type, initialData, list, onAddEntry, onClose, onSubmit }) {
   const isDeposit = type === 'deposit';
   const isEdit = !!initialData;
   const [amount, setAmount] = useState(initialData ? String(initialData.amount) : '');
-  
-  const defaultDate = initialData ? initialData.date : (() => {
-    const t = todayStr();
-    return t.startsWith(selectedMonth) ? t : startOfMonthStr(selectedMonth);
-  })();
-
-  const [date, setDate] = useState(defaultDate);
+  const [date, setDate] = useState(initialData ? initialData.date : todayStr());
+  const [time, setTime] = useState(initialData && initialData.time ? initialData.time : nowTimeStr());
+  const [method, setMethod] = useState(initialData ? initialData.method : 'cash');
   const [note, setNote] = useState(initialData ? initialData.note || '' : '');
   const [addingNew, setAddingNew] = useState(false);
   const [newEntry, setNewEntry] = useState('');
+  const [showDateTime, setShowDateTime] = useState(false);
 
   const valid = Number(amount) > 0 && !!date;
   const displayList = note && !list.includes(note) ? [note, ...list] : list;
@@ -899,7 +873,7 @@ function TxModal({ type, initialData, selectedMonth, list, onAddEntry, onClose, 
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">ج.م</span>
       </div>
 
-      <label className="block text-xs text-slate-400 mb-1.5">{isDeposit ? 'جهة الإيداع' : 'جهة الصرف'}</label>
+      <label className="block text-xs text-slate-400 mb-1.5">{isDeposit ? 'إيداع من' : 'جهة الصرف'}</label>
       {!addingNew ? (
         <div className="flex gap-2 mb-4">
           <select
@@ -934,7 +908,7 @@ function TxModal({ type, initialData, selectedMonth, list, onAddEntry, onClose, 
                 confirmNewEntry();
               }
             }}
-            placeholder={isDeposit ? 'جهة الإيداع — مثال: راتب' : 'جهة الصرف — مثال: سوبر ماركت'}
+            placeholder={isDeposit ? 'اسم الشخص المودِع — مثال: محمد أحمد' : 'مثال: سوبر ماركت'}
             className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
           />
           <button
@@ -958,19 +932,83 @@ function TxModal({ type, initialData, selectedMonth, list, onAddEntry, onClose, 
         </div>
       )}
 
-      <div className="mb-5">
-        <label className="block text-xs text-slate-400 mb-1.5">التاريخ فقط</label>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
-        />
+      {/* التاريخ والساعة: بيتسجلوا تلقائيًا، وتقدر تعدّلهم */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <Icon name="clock" size={14} className="text-slate-400 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-sm truncate">{formatDateTime(date, time)}</div>
+              {!isEdit && !showDateTime && <div className="text-[11px] text-slate-400">اتسجّل تلقائيًا</div>}
+            </div>
+          </div>
+          <button
+            onClick={() => setShowDateTime((v) => !v)}
+            className="text-xs shrink-0 px-2 py-1 rounded-md text-slate-500 hover:text-slate-800 hover:bg-white"
+          >
+            {showDateTime ? 'تم' : 'تعديل'}
+          </button>
+        </div>
+
+        {showDateTime && (
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">التاريخ</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5">الساعة</label>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                dir="ltr"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+            <button
+              onClick={() => {
+                setDate(todayStr());
+                setTime(nowTimeStr());
+              }}
+              className="col-span-2 text-xs text-slate-400 hover:text-slate-700 py-1"
+            >
+              رجّع تاريخ وساعة دلوقتي
+            </button>
+          </div>
+        )}
+      </div>
+
+      <label className="block text-xs text-slate-400 mb-2">{isDeposit ? 'طريقة الإدخال' : 'طريقة الخصم'}</label>
+      <div className="grid grid-cols-3 gap-2 mb-5">
+        {Object.entries(METHODS).map(([key, m]) => {
+          const active = method === key;
+          return (
+            <button
+              key={key}
+              onClick={() => setMethod(key)}
+              className="flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs"
+              style={{
+                borderColor: active ? m.hex : '#E2E8F0',
+                background: active ? `${m.hex}14` : 'white',
+                color: active ? m.hex : '#64748B',
+              }}
+            >
+              <Icon name={m.icon} size={15} />
+              {m.label}
+            </button>
+          );
+        })}
       </div>
 
       <button
         disabled={!valid}
-        onClick={() => onSubmit({ amount, date, note: note.trim() })}
+        onClick={() => onSubmit({ amount, date, time, method, note: note.trim() })}
         className="w-full py-3 rounded-lg text-white text-sm font-medium"
         style={{ background: isDeposit ? INK.deposit : INK.expense, opacity: valid ? 1 : 0.4 }}
       >
@@ -987,7 +1025,7 @@ function BackupModal({ data, onClose, onRestore }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(text);
-      setStatus('اتنسخت البيانات بنجاح.');
+      setStatus('اتنسخت البيانات. احفظها في مكان آمن.');
     } catch (e) {
       setStatus('المتصفح منع النسخ. حدّد النص يدويًا وانسخه.');
     }
@@ -997,23 +1035,23 @@ function BackupModal({ data, onClose, onRestore }) {
     try {
       const parsed = JSON.parse(text);
       const ok = onRestore(parsed);
-      if (!ok) setStatus('الملف غير صالح.');
+      if (!ok) setStatus('الملف مش بالشكل المتوقع. لازم يحتوي على قائمة banks.');
     } catch (e) {
-      setStatus('النص غير صالح.');
+      setStatus('النص مش JSON صالح.');
     }
   }
 
   return (
     <ModalShell title="نسخة احتياطية" onClose={onClose}>
       <p className="text-xs text-slate-400 mb-3">
-        انسخ هذا النص للنسخ الاحتياطي، أو ألصق نصاً تم نسخه سابقاً لاستعادته.
+        البيانات محفوظة على الجهاز ده بس. انسخ النص وخزّنه، ولو نقلت الجهاز الصق النص هنا واضغط استعادة.
       </p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         dir="ltr"
         rows={8}
-        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-xs font-mono mb-3 focus:outline-none focus:ring-2 focus:ring-slate-300"
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-xs text-left font-mono mb-3 focus:outline-none focus:ring-2 focus:ring-slate-300"
       />
       {status && <div className="text-xs text-slate-500 mb-3">{status}</div>}
       <div className="flex gap-2">
@@ -1044,31 +1082,37 @@ function ConfirmModal({ title, message, onCancel, onConfirm }) {
   );
 }
 
-function ReportPeriodModal({ defaultMonth, onClose, onGenerate }) {
-  const [from, setFrom] = useState(startOfMonthStr(defaultMonth));
-  const [to, setTo] = useState(endOfMonthStr(defaultMonth));
+function ReportPeriodModal({ onClose, onGenerate }) {
+  const [from, setFrom] = useState(startOfMonthStr(0));
+  const [to, setTo] = useState(todayStr());
 
   function preset(kind) {
     if (kind === 'thisMonth') {
-      setFrom(startOfMonthStr(defaultMonth));
-      setTo(endOfMonthStr(defaultMonth));
+      setFrom(startOfMonthStr(0));
+      setTo(todayStr());
+    } else if (kind === 'lastMonth') {
+      setFrom(startOfMonthStr(-1));
+      setTo(endOfMonthStr(-1));
     } else if (kind === 'all') {
       setFrom('');
-      setTo('');
+      setTo(todayStr());
     }
   }
 
   const invalid = from && to && from > to;
 
   return (
-    <ModalShell title="تقرير PDF" onClose={onClose}>
-      <p className="text-xs text-slate-400 mb-3">حدد الفترة الزمنية التي تريد استخراج التقرير لها.</p>
+    <ModalShell title="تقرير جديد" onClose={onClose}>
+      <p className="text-xs text-slate-400 mb-3">اختر الفترة اللي عايز تشوف معاملاتها ورصيدها الختامي.</p>
       <div className="flex gap-2 mb-4 flex-wrap">
         <button onClick={() => preset('thisMonth')} className="px-3 py-1.5 rounded-full text-xs border border-slate-200 text-slate-500 hover:bg-slate-50">
-          الشهر المحدد الحالي
+          هذا الشهر
+        </button>
+        <button onClick={() => preset('lastMonth')} className="px-3 py-1.5 rounded-full text-xs border border-slate-200 text-slate-500 hover:bg-slate-50">
+          الشهر اللي فات
         </button>
         <button onClick={() => preset('all')} className="px-3 py-1.5 rounded-full text-xs border border-slate-200 text-slate-500 hover:bg-slate-50">
-          الكل من البداية
+          من البداية
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2 mb-5">
@@ -1091,7 +1135,7 @@ function ReportPeriodModal({ defaultMonth, onClose, onGenerate }) {
           />
         </div>
       </div>
-      {invalid && <p className="text-xs text-rose-500 mb-3">تاريخ البداية يجب أن يكون قبل تاريخ النهاية.</p>}
+      {invalid && <p className="text-xs text-rose-500 mb-3">تاريخ البداية لازم يكون قبل تاريخ النهاية.</p>}
       <button
         disabled={invalid}
         onClick={() => onGenerate(from, to)}
@@ -1104,137 +1148,108 @@ function ReportPeriodModal({ defaultMonth, onClose, onGenerate }) {
   );
 }
 
-function ReportView({ report, onClose }) {
+function ReportView({ report, onBack }) {
   return (
     <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-fade-in">
       <div className="no-print sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between">
-        <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-800">
-          → إغلاق
+        <button onClick={onBack} className="text-sm text-slate-500 hover:text-slate-800">
+          → رجوع
         </button>
         <button onClick={() => window.print()} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: INK.dark }}>
           طباعة / حفظ PDF
         </button>
       </div>
 
-      <div id="printable-report" className="max-w-xl mx-auto px-6 py-8" dir="rtl">
-        <h1 className="font-serif-ar text-2xl font-bold mb-2 text-slate-800">تقرير — {report.bankName}</h1>
-        
-        {/* 1. الفترة المحددة */}
-        <div className="text-xs text-slate-500 mb-6 pb-2 border-b border-slate-200">
-          <span className="font-semibold text-slate-700">الفترة المحددة: </span>
-          {report.fromDate ? formatDateOnly(report.fromDate) : 'بداية الحصالة'} — {report.toDate ? formatDateOnly(report.toDate) : 'حتى الآن'}
+      <div id="printable-report" className="max-w-lg mx-auto px-5 py-6" dir="rtl">
+        <h1 className="font-serif-ar text-xl mb-1">تقرير — {report.bankName}</h1>
+        <div className="text-xs text-slate-500 mb-6 leading-5">
+          الفترة: {report.fromDate ? formatDateOnly(report.fromDate) : 'من البداية'} — {report.toDate ? formatDateOnly(report.toDate) : 'اليوم'}
+          <br />
+          تاريخ الإصدار: {formatDateOnly(todayStr())}
         </div>
 
-        {/* 2. الرصيد النهائي + إجمالي الإيداعات والمصروفات */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
-            <div className="text-xs text-slate-500 mb-1">الرصيد النهائي للفترة</div>
-            <div dir="ltr" className="text-base font-bold" style={{ color: INK.dark }}>
+        <div className="grid grid-cols-2 gap-3 mb-6 text-sm">
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">الرصيد الافتتاحي</div>
+            <div dir="ltr" className="font-medium">
+              {formatAmount(report.opening)} ج.م
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">الرصيد الختامي (الإجمالي)</div>
+            <div dir="ltr" className="font-medium" style={{ color: INK.dark }}>
               {formatAmount(report.closing)} ج.م
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 p-3 bg-emerald-50/30">
-            <div className="text-xs text-slate-500 mb-1">إجمالي الإيداعات</div>
-            <div dir="ltr" className="text-base font-bold" style={{ color: INK.deposit }}>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">إجمالي الإيداعات</div>
+            <div dir="ltr" className="font-medium" style={{ color: INK.deposit }}>
               +{formatAmount(report.depositTotal)} ج.م
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 p-3 bg-rose-50/30">
-            <div className="text-xs text-slate-500 mb-1">إجمالي المصروفات</div>
-            <div dir="ltr" className="text-base font-bold" style={{ color: INK.expense }}>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs text-slate-400 mb-1">إجمالي المصروفات</div>
+            <div dir="ltr" className="font-medium" style={{ color: INK.expense }}>
               -{formatAmount(report.expenseTotal)} ج.م
             </div>
           </div>
         </div>
 
-        {/* 3. الرقم الإجمالي لكل جهة إيداع */}
         <div className="mb-6">
-          <h3 className="text-sm font-bold text-slate-700 mb-2 border-r-2 border-emerald-600 pr-2">
-            إجمالي لكل جهة إيداع
-          </h3>
-          {Object.keys(report.depositByTarget).length === 0 ? (
-            <div className="text-xs text-slate-400 py-2">لا توجد إيداعات في هذه الفترة</div>
-          ) : (
-            <table className="w-full text-xs border-collapse border border-slate-200">
-              <thead>
-                <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                  <th className="text-right p-2 font-semibold">جهة الإيداع</th>
-                  <th className="text-left p-2 font-semibold">الإجمالي</th>
+          <div className="text-xs text-slate-400 mb-2">التوزيع حسب طريقة الدفع خلال الفترة</div>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 text-slate-400">
+                <th className="text-right py-1.5 font-normal">الطريقة</th>
+                <th className="text-right py-1.5 font-normal">إيداعات</th>
+                <th className="text-right py-1.5 font-normal">مصروفات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(METHODS).map(([key, m]) => (
+                <tr key={key} className="border-b border-slate-100">
+                  <td className="py-1.5">{m.label}</td>
+                  <td dir="ltr" className="py-1.5">
+                    {formatAmount(report.byMethod[key].deposit)}
+                  </td>
+                  <td dir="ltr" className="py-1.5">
+                    {formatAmount(report.byMethod[key].expense)}
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {Object.entries(report.depositByTarget).map(([target, amt]) => (
-                  <tr key={target}>
-                    <td className="p-2 text-slate-800">{target}</td>
-                    <td dir="ltr" className="p-2 text-left font-semibold" style={{ color: INK.deposit }}>
-                      +{formatAmount(amt)} ج.م
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        {/* 4. الرقم الإجمالي لكل جهة صرف */}
-        <div className="mb-6">
-          <h3 className="text-sm font-bold text-slate-700 mb-2 border-r-2 border-rose-600 pr-2">
-            إجمالي لكل جهة صرف
-          </h3>
-          {Object.keys(report.expenseByTarget).length === 0 ? (
-            <div className="text-xs text-slate-400 py-2">لا توجد مصروفات في هذه الفترة</div>
-          ) : (
-            <table className="w-full text-xs border-collapse border border-slate-200">
-              <thead>
-                <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                  <th className="text-right p-2 font-semibold">جهة الصرف</th>
-                  <th className="text-left p-2 font-semibold">الإجمالي</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {Object.entries(report.expenseByTarget).map(([target, amt]) => (
-                  <tr key={target}>
-                    <td className="p-2 text-slate-800">{target}</td>
-                    <td dir="ltr" className="p-2 text-left font-semibold" style={{ color: INK.expense }}>
-                      -{formatAmount(amt)} ج.م
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {/* 5. سجل المعاملات */}
         <div>
-          <h3 className="text-sm font-bold text-slate-700 mb-2 border-r-2 border-slate-600 pr-2">
-            سجل المعاملات
-          </h3>
+          <div className="text-xs text-slate-400 mb-2">سجل المعاملات ({report.rows.length})</div>
           {report.rows.length === 0 ? (
-            <div className="text-xs text-slate-400 py-4 text-center">لا توجد معاملات خلال الفترة</div>
+            <div className="text-sm text-slate-400 py-6 text-center">لا توجد معاملات في هذه الفترة</div>
           ) : (
-            <table className="w-full text-xs border-collapse border border-slate-200">
+            <table className="w-full text-xs border-collapse">
               <thead>
-                <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                  <th className="text-right p-2 font-semibold">التاريخ</th>
-                  <th className="text-right p-2 font-semibold">النوع</th>
-                  <th className="text-right p-2 font-semibold">الجهة / البيان</th>
-                  <th className="text-left p-2 font-semibold">المبلغ</th>
+                <tr className="border-b border-slate-200 text-slate-400">
+                  <th className="text-right py-1.5 font-normal">التاريخ</th>
+                  <th className="text-right py-1.5 font-normal">النوع</th>
+                  <th className="text-right py-1.5 font-normal">الطريقة</th>
+                  <th className="text-right py-1.5 font-normal">البيان</th>
+                  <th className="text-left py-1.5 font-normal">المبلغ</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {report.rows.map((t) => (
-                  <tr key={t.id}>
-                    <td className="p-2 whitespace-nowrap">{formatDateOnly(t.date)}</td>
-                    <td className="p-2">{t.type === 'deposit' ? 'إيداع' : 'صرف'}</td>
-                    <td className="p-2">{t.note || '—'}</td>
+                  <tr key={t.id} className="border-b border-slate-100">
+                    <td className="py-1.5">{formatShort(t.date, t.time)}</td>
+                    <td className="py-1.5">{t.type === 'deposit' ? 'إيداع' : 'صرف'}</td>
+                    <td className="py-1.5">{(METHODS[t.method] || {}).label || ''}</td>
+                    <td className="py-1.5">{t.note || '—'}</td>
                     <td
                       dir="ltr"
-                      className="p-2 text-left font-semibold whitespace-nowrap"
+                      className="py-1.5 text-left"
                       style={{ color: t.type === 'deposit' ? INK.deposit : INK.expense }}
                     >
                       {t.type === 'deposit' ? '+' : '\u2212'}
-                      {formatAmount(t.amount)} ج.م
+                      {formatAmount(t.amount)}
                     </td>
                   </tr>
                 ))}
